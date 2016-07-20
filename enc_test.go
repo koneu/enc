@@ -27,14 +27,20 @@ type Test struct {
 	U32 uint32
 	U64 uint64
 
-	P *int
+	F32 float32
+	F64 float64
+
+	C64  complex64
+	C128 complex128
+
+	P *uintptr
 	B bool
 	S string
 	L []byte
 	A [8]int
 	T Time
 
-	M map[string][]Test
+	M map[string][]*Test
 }
 
 type Time struct{ time.Time }

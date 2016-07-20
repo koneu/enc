@@ -14,7 +14,32 @@ import (
 	"testing"
 )
 
-var benchValue = randomValue(nil, reflect.TypeOf(Test{}))
+type Bench struct {
+	I   int
+	I8  int8
+	I16 int16
+	I32 int32
+	I64 int64
+	U   uint
+	U8  uint8
+	U16 uint16
+	U32 uint32
+	U64 uint64
+
+	F32 float32
+	F64 float64
+
+	P *uintptr
+	B bool
+	S string
+	L []byte
+	A [8]int
+	T Time
+
+	M map[string][]Bench
+}
+
+var benchValue = randomValue(nil, reflect.TypeOf(Bench{}))
 var encValue, encGob, encJSON []byte
 
 func init() {
@@ -72,7 +97,7 @@ func BenchmarkEncodeGob(b *testing.B) {
 
 func BenchmarkDecode(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		if err := Decode(bytes.NewReader(encValue), new(Test)); err != nil {
+		if err := Decode(bytes.NewReader(encValue), new(Bench)); err != nil {
 			b.Log(err)
 		}
 	}
@@ -80,7 +105,7 @@ func BenchmarkDecode(b *testing.B) {
 
 func BenchmarkDecodeJSON(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		if err := json.NewDecoder(bytes.NewReader(encJSON)).Decode(new(Test)); err != nil {
+		if err := json.NewDecoder(bytes.NewReader(encJSON)).Decode(new(Bench)); err != nil {
 			b.Log(err)
 		}
 	}
@@ -88,7 +113,7 @@ func BenchmarkDecodeJSON(b *testing.B) {
 
 func BenchmarkDecodeGob(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		if err := gob.NewDecoder(bytes.NewReader(encGob)).Decode(new(Test)); err != nil {
+		if err := gob.NewDecoder(bytes.NewReader(encGob)).Decode(new(Bench)); err != nil {
 			b.Log(err)
 		}
 	}

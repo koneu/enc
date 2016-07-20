@@ -35,7 +35,7 @@ func EncodeValue(w io.Writer, v reflect.Value) (err error) {
 		e.w = w
 	} else {
 		tmp := bufio.NewWriter(w)
-		defer tmp.Flush()
+		defer func() { err = tmp.Flush() }()
 		w = tmp
 	}
 

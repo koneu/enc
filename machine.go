@@ -6,6 +6,7 @@ package enc
 
 import (
 	"encoding"
+	"math"
 	"reflect"
 	"sync"
 )
@@ -54,24 +55,28 @@ bigswitch:
 		return boolMachine{}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return intMachine{}
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return uintMachine{}
-	case reflect.Ptr:
-		return &ptrMachine{reflect.Zero(t), t.Elem(), g.get(t.Elem())}
+	case reflect.Float32, reflect.Float64:
+		return floatMachine{}
+	case reflect.Complex64, reflect.Complex128:
+		return complexMachine{}
+	case reflect.Array:
+		ret = &arrayMachine{t.Len(), g.get(t.Elem())}
 	case reflect.Interface:
 		return &interfaceMachine{reflect.Zero(t)}
-	case reflect.String:
-		return stringMachine{}
 	case reflect.Map:
 		k, v := t.Key(), t.Elem()
 		return &mapMachine{t, k, v, g.get(k), g.get(v)}
+	case reflect.Ptr:
+		return &ptrMachine{reflect.Zero(t), t.Elem(), g.get(t.Elem())}
 	case reflect.Slice:
 		if t == bytesType {
 			return bytesMachine{}
 		}
 		return &sliceMachine{t, g.get(t.Elem())}
-	case reflect.Array:
-		ret = &arrayMachine{t.Len(), g.get(t.Elem())}
+	case reflect.String:
+		return stringMachine{}
 	case reflect.Struct:
 		r := make(structMachine, t.NumField())
 		for i := range r {
@@ -187,6 +192,53 @@ type uintMachine struct{}
 func (uintMachine) encode(e *encoder, v reflect.Value) { e.encodeUint(v.Uint()) }
 func (uintMachine) decode(d *decoder, v reflect.Value) { v.SetUint(d.decodeUint()) }
 
+type floatMachine struct{}
+
+func (floatMachine) encode(e *encoder, v reflect.Value) {
+	e.encodeUint(math.Float64bits(v.Float()))
+}
+
+func (floatMachine) decode(d *decoder, v reflect.Value) {
+	v.SetFloat(math.Float64frombits(d.decodeUint()))
+}
+
+type complexMachine struct{}
+
+func (complexMachine) encode(e *encoder, v reflect.Value) {
+	c := v.Complex()
+	e.encodeUint(math.Float64bits(real(c)))
+	e.encodeUint(math.Float64bits(imag(c)))
+}
+
+func (complexMachine) decode(d *decoder, v reflect.Value) {
+	v.SetComplex(complex(
+		math.Float64frombits(d.decodeUint()),
+		math.Float64frombits(d.decodeUint()),
+	))
+}
+
+type arrayMachine struct {
+	l int
+	m machine
+}
+
+func (m *arrayMachine) encode(e *encoder, v reflect.Value) {
+	e.encodeUint(uint64(m.l))
+	for i := 0; i < m.l; i++ {
+		m.m.encode(e, v.Index(i))
+	}
+}
+
+func (m *arrayMachine) decode(d *decoder, v reflect.Value) {
+	l := m.l
+	if t := int(d.decodeUint()); t < l {
+		l = t
+	}
+	for i := 0; i < l; i++ {
+		m.m.decode(d, v.Index(i))
+	}
+}
+
 type interfaceMachine struct{ z reflect.Value }
 
 func (*interfaceMachine) encode(e *encoder, v reflect.Value) {
@@ -202,6 +254,29 @@ func (m *interfaceMachine) decode(d *decoder, v reflect.Value) {
 	if !decodeZero(d, v, m.z) {
 		v = v.Elem()
 		types.get(v.Type()).decode(d, v)
+	}
+}
+
+type mapMachine struct {
+	t, tk, tv reflect.Type
+	k, v      machine
+}
+
+func (m *mapMachine) encode(e *encoder, v reflect.Value) {
+	e.encodeUint(uint64(v.Len()))
+	for _, i := range v.MapKeys() {
+		m.k.encode(e, i)
+		m.v.encode(e, v.MapIndex(i))
+	}
+}
+
+func (m *mapMachine) decode(d *decoder, v reflect.Value) {
+	v.Set(reflect.MakeMap(m.t))
+	for i, l := uint64(0), d.decodeUint(); i < l; i++ {
+		key, val := reflect.New(m.tk).Elem(), reflect.New(m.tv).Elem()
+		m.k.decode(d, key)
+		m.v.decode(d, val)
+		v.SetMapIndex(key, val)
 	}
 }
 
@@ -229,51 +304,6 @@ func (m *ptrMachine) decode(d *decoder, v reflect.Value) {
 	m.m.decode(d, v.Elem())
 }
 
-type stringMachine struct{}
-
-func (stringMachine) encode(e *encoder, v reflect.Value) {
-	e.encodeUint(uint64(v.Len()))
-	e.writeString(v.String())
-}
-
-func (stringMachine) decode(d *decoder, v reflect.Value) {
-	v.SetString(string(d.read(d.decodeUint())))
-}
-
-type mapMachine struct {
-	t, tk, tv reflect.Type
-	k, v      machine
-}
-
-func (m *mapMachine) encode(e *encoder, v reflect.Value) {
-	e.encodeUint(uint64(v.Len()))
-	for _, i := range v.MapKeys() {
-		m.k.encode(e, i)
-		m.v.encode(e, v.MapIndex(i))
-	}
-}
-
-func (m *mapMachine) decode(d *decoder, v reflect.Value) {
-	v.Set(reflect.MakeMap(m.t))
-	for i, l := uint64(0), d.decodeUint(); i < l; i++ {
-		key, val := reflect.New(m.tk).Elem(), reflect.New(m.tv).Elem()
-		m.k.decode(d, key)
-		m.v.decode(d, val)
-		v.SetMapIndex(key, val)
-	}
-}
-
-type bytesMachine struct{}
-
-func (bytesMachine) encode(e *encoder, v reflect.Value) {
-	e.encodeUint(uint64(v.Len()))
-	e.write(v.Bytes())
-}
-
-func (bytesMachine) decode(d *decoder, v reflect.Value) {
-	v.SetBytes(d.read(d.decodeUint()))
-}
-
 type sliceMachine struct {
 	t reflect.Type
 	m machine
@@ -294,26 +324,15 @@ func (m *sliceMachine) decode(d *decoder, v reflect.Value) {
 	}
 }
 
-type arrayMachine struct {
-	l int
-	m machine
+type stringMachine struct{}
+
+func (stringMachine) encode(e *encoder, v reflect.Value) {
+	e.encodeUint(uint64(v.Len()))
+	e.writeString(v.String())
 }
 
-func (m *arrayMachine) encode(e *encoder, v reflect.Value) {
-	e.encodeUint(uint64(m.l))
-	for i := 0; i < m.l; i++ {
-		m.m.encode(e, v.Index(i))
-	}
-}
-
-func (m *arrayMachine) decode(d *decoder, v reflect.Value) {
-	l := m.l
-	if t := int(d.decodeUint()); t < l {
-		l = t
-	}
-	for i := 0; i < l; i++ {
-		m.m.decode(d, v.Index(i))
-	}
+func (stringMachine) decode(d *decoder, v reflect.Value) {
+	v.SetString(string(d.read(d.decodeUint())))
 }
 
 type structMachine []machine
@@ -333,6 +352,17 @@ func (m structMachine) decode(d *decoder, v reflect.Value) {
 	for i := 0; i < l; i++ {
 		m[i].decode(d, v.Field(i))
 	}
+}
+
+type bytesMachine struct{}
+
+func (bytesMachine) encode(e *encoder, v reflect.Value) {
+	e.encodeUint(uint64(v.Len()))
+	e.write(v.Bytes())
+}
+
+func (bytesMachine) decode(d *decoder, v reflect.Value) {
+	v.SetBytes(d.read(d.decodeUint()))
 }
 
 type marshalerMachine struct{ e, d bool }
