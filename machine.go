@@ -63,6 +63,9 @@ bigswitch:
 		return complexMachine{}
 	case reflect.Array:
 		ret = &arrayMachine{t.Len(), g.get(t.Elem())}
+	case reflect.Chan:
+		e, s := t.Elem(), reflect.SliceOf(t.Elem())
+		return &chanMachine{reflect.Zero(t), e, s, t, g.get(e), g.get(s)}
 	case reflect.Interface:
 		return &interfaceMachine{reflect.Zero(t)}
 	case reflect.Map:
@@ -239,11 +242,45 @@ func (m *arrayMachine) decode(d *decoder, v reflect.Value) {
 	}
 }
 
+type chanMachine struct {
+	z         reflect.Value
+	t, ts, tc reflect.Type
+	m, ms     machine
+}
+
+func (m *chanMachine) encode(e *encoder, v reflect.Value) {
+	if v.IsNil() {
+		e.writeByte(0)
+		return
+	}
+	s := reflect.MakeSlice(m.ts, 0, 8)
+	for e, ok := v.Recv(); ok; e, ok = v.Recv() {
+		s = reflect.Append(s, e)
+	}
+	m.ms.encode(e, s)
+}
+
+func (m *chanMachine) decode(d *decoder, v reflect.Value) {
+	if decodeZero(d, v, m.z) {
+		return
+	}
+
+	l := int(d.decodeUint())
+	if v.IsNil() {
+		v.Set(reflect.MakeChan(m.tc, int(l)))
+	}
+	for i := 0; i < l; i++ {
+		e := reflect.New(m.t).Elem()
+		m.m.decode(d, e)
+		v.Send(e)
+	}
+}
+
 type interfaceMachine struct{ z reflect.Value }
 
 func (*interfaceMachine) encode(e *encoder, v reflect.Value) {
 	if !v.IsValid() || v.IsNil() {
-		e.encodeUint(0)
+		e.writeByte(0)
 		return
 	}
 	v = v.Elem()

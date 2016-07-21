@@ -73,8 +73,44 @@ func TestInterface(t *testing.T) {
 }
 
 func TestNilInterface(t *testing.T) {
-	var a, b interface{}
-	testEquals(t, &a, &b)
+	v := randomValue(t, reflect.TypeOf(Test{}))
+	testEquals(t, new(interface{}), &v)
+}
+
+func TestChan(t *testing.T) {
+	v := *(randomValue(t, reflect.TypeOf([]int{})).(*[]int))
+
+	c := make(chan int)
+	go func() {
+		for _, i := range v {
+			c <- i
+		}
+		close(c)
+	}()
+
+	var buf bytes.Buffer
+
+	if err := Encode(&buf, c); err != nil {
+		t.Error(err)
+	}
+	c = nil
+	if err := Decode(&buf, &c); err != nil {
+		t.Error(err)
+	}
+
+	if cap(c) != len(v) {
+		t.Error("decoded data does not match encoded data")
+	}
+	for _, i := range v {
+		if i != <-c {
+			t.Error("decoded data does not match encoded data")
+		}
+	}
+}
+
+func TestNilChan(t *testing.T) {
+	v := make(chan int)
+	testEquals(t, new(chan int), &v)
 }
 
 func testEquals(t *testing.T, a, b interface{}) {
